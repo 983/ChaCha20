@@ -96,6 +96,14 @@ struct Chacha20Block {
             assert(0 != counter[1]);
         }
     }
+    
+    void next(uint8_t result8[64]){
+        uint32_t temp32[16];
+        
+        next(temp32);
+        
+        for (size_t i = 0; i < 16; i++) unpack4(temp32[i], result8 + i*4);
+    }
 };
 
 struct Chacha20 {
@@ -107,7 +115,7 @@ struct Chacha20 {
     // See https://en.wikipedia.org/wiki/Stream_cipher_attack
 
     Chacha20Block block;
-    uint32_t keystream32[16];
+    uint8_t keystream8[64];
     size_t position;
 
     Chacha20(
@@ -119,10 +127,9 @@ struct Chacha20 {
     }
 
     void crypt(uint8_t *bytes, size_t n_bytes){
-        uint8_t *keystream8 = (uint8_t*)keystream32;
         for (size_t i = 0; i < n_bytes; i++){
             if (position >= 64){
-                block.next(keystream32);
+                block.next(keystream8);
                 position = 0;
             }
             bytes[i] ^= keystream8[position];

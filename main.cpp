@@ -1,5 +1,6 @@
 #include "chacha20.hpp"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,11 +39,6 @@ Bytes raw_to_hex(const Bytes &src){
     return dst;
 }
 
-void print(const Bytes &src){
-    fwrite(&src[0], 1, src.size(), stdout);
-    puts("");
-}
-
 bool operator == (const Bytes &a, const Bytes &b){
     size_t na = a.size();
     size_t nb = b.size();
@@ -67,14 +63,7 @@ void test_keystream(
     Chacha20 chacha(key.data(), nonce.data());
     chacha.crypt(&result[0], result.size());
 
-    if (result == keystream){
-        puts("Success! Keystream as expected:\n");
-    }else{
-        puts("Failure! Keystream not as expected:\n");
-    }
-    print(raw_to_hex(result));
-    puts(text_keystream);
-    puts("\n");
+    assert(result == keystream);
 }
 
 void test_crypt(
@@ -92,49 +81,49 @@ void test_crypt(
     Chacha20 chacha(key.data(), nonce.data(), counter);
 
     Bytes result(plain);
-    // Encryption and decryption are the same operation
+    // Encryption and decryption are the same operation.
     chacha.crypt(&result[0], result.size());
 
-    if (result == encrypted){
-       puts("Success! Encrypted text as expected:\n");
-    }else{
-        puts("Failure! Encrypted text not as expected:\n");
+    assert(result == encrypted);
+}
+
+uint32_t adler32(const uint8_t *bytes, size_t n_bytes){
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < n_bytes; i++){
+        a = (a + bytes[i]) % 65521;
+        b = (b + a) % 65521;
     }
-    print(raw_to_hex(result));
-    puts(text_encrypted);
-    puts("\n");
+    return (b << 16) | a;
 }
 
-Bytes load_file(const char *path){
-    FILE *fp = fopen(path, "rb");
-    if (!fp){
-        printf("Could not open file \"%s\"\n", path);
-        exit(0);
-    }
-    fseek(fp, 0, SEEK_END);
-    size_t n = ftell(fp);
-    rewind(fp);
-    Bytes bytes(n);
-    fread(&bytes[0], 1, n, fp);
-    fclose(fp);
-    return bytes;
-}
-
-void save_file(const char *path, const Bytes &bytes){
-    FILE *fp = fopen(path, "wb");
-    fwrite(&bytes[0], 1, bytes.size(), fp);
-    fclose(fp);
-}
-
-void test_file(const char *src_path, const char *dst_path){
-    Bytes bytes = load_file(src_path);
+void test_encrypt_decrypt(uint32_t expected_adler32_checksum){
+    // Encrypt and decrypt a megabyte of [0, 1, 2, ..., 255, 0, 1, ...].
+    Bytes bytes(1024 * 1024);
+    for (size_t i = 0; i < bytes.size(); i++) bytes[i] = i & 255;
+    
+    // Encrypt
+    
     // Best password by consensus.
     uint8_t key[32] = {1, 2, 3, 4, 5, 6};
     // Really does not matter what this is, except that it is only used once.
     uint8_t nonce[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     Chacha20 chacha(key, nonce);
-    chacha.crypt(&bytes[0], bytes.size());
-    save_file(dst_path, bytes);
+    chacha.crypt(bytes.data(), bytes.size());
+    
+    // Verify by checksum that the encrypted text is as expected.
+    // Note that the adler32 checksum is not cryptographically secure.
+    // It is only used for testing here.
+    uint32_t checksum = adler32(bytes.data(), bytes.size());
+    assert(checksum == expected_adler32_checksum);
+    
+    // Decrypt
+    
+    // Reset ChaCha20 de/encryption object.
+    chacha = Chacha20(key, nonce);
+    chacha.crypt(bytes.data(), bytes.size());
+    
+    // Check if crypt(crypt(input)) == input.
+    for (size_t i = 0; i < bytes.size(); i++) assert(bytes[i] == (i & 255));
 }
 
 int main(){
@@ -152,9 +141,10 @@ int main(){
     test_keystream("0000000000000000000000000000000000000000000000000000000000000000", "0000000000000001", "de9cba7bf3d69ef5e786dc63973f653a0b49e015adbff7134fcb7df137821031e85a050278a7084527214f73efc7fa5b5277062eb7a0433e445f41e3");
     test_keystream("0000000000000000000000000000000000000000000000000000000000000000", "0100000000000000", "ef3fdfd6c61578fbf5cf35bd3dd33b8009631634d21e42ac33960bd138e50d32111e4caf237ee53ca8ad6426194a88545ddc497a0b466e7d6bbdb0041b2f586b");
     test_keystream("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "0001020304050607", "f798a189f195e66982105ffb640bb7757f579da31602fc93ec01ac56f85ac3c134a4547b733b46413042c9440049176905d3be59ea1c53f15916155c2be8241a38008b9a26bc35941e2444177c8ade6689de95264986d95889fb60e84629c9bd9a5acb1cc118be563eb9b3a4a472f82e09a7e778492b562ef7130e88dfe031c79db9d4f7c7a899151b9a475032b63fc385245fe054e3dd5a97a5f576fe064025d3ce042c566ab2c507b138db853e3d6959660996546cc9c4a6eafdc777c040d70eaf46f76dad3979e5c5360c3317166a1c894c94a371876a94df7628fe4eaaf2ccb27d5aaae0ad7ad0f9d4b6ad3b54098746d4524d38407a6deb3ab78fab78c9");
-    // Run twice to encrypt and decrypt.
-    // If you can read it it worked.
-    test_file("rfc7539.txt", "rfc7539.txt");
+    
+    test_encrypt_decrypt(3934073876);
+    
+    puts("Success! Tests passed.");
 
     return 0;
 }
